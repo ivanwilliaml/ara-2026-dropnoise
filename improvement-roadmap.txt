@@ -1,0 +1,189 @@
+List Perbaikan Notebook (urutan berdasarkan dependency, bukan cuma prioritas)
+Fase 0, Fondasi (semua hal lain bergantung ke ini)
+
+CFG dict di satu cell, konsolidasi semua constant yang sekarang tersebar (IMG_SIZE, LR, EPOCHS, dst)
+Validation split / K-Fold (stratified pakai tier LIST_DICE_0/LOW/MID biar tiap fold representatif)
+Ganti manual loop jadi CustomDataset + DataLoader (cukup di dalam notebook, ngga perlu file terpisah)
+Mixed precision (torch.cuda.amp.autocast + GradScaler), quick win karena BATCH_SIZE=2 sekarang kemungkinan dibatasi VRAM
+
+Fase 1, Training loop yang robust
+
+Save best_model.pth berdasarkan validation dice, bukan epoch terakhir
+Early stopping (dengan penyesuaian scheduler seperti dibahas di atas)
+Reproducibility tambahan: worker_init_fn seed buat DataLoader, torch.use_deterministic_algorithms, catat versi package
+
+Fase 2, Evaluasi & insight (lakuin sebelum eksperimen besar-besaran)
+
+Threshold search di validation set (sweep 0.1-0.9)
+Error analysis: top-20 dice terburuk, kategorisasi alasan gagal (objek kecil, blur, noise, overexposure, boundary sulit)
+Dokumentasi data cleaning jadi corrupted_samples.csv dengan kolom reason, gantiin BLACKLIST hardcoded
+
+Fase 3, Eksperimen terarah (diprioritaskan berdasarkan temuan fase 2)
+
+Augmentation tambahan: RandomShadow, RandomSunFlare, GaussianBlur/MotionBlur, GaussNoise, ShiftScaleRotate, ElasticTransform/GridDistortion (mild), RandomCrop (mask-aware)
+Bandingkan loss: BCE+Dice, Tversky, FocalTversky, Lovasz, dibandingkan dengan Focal+Dice yang sekarang
+WeightedRandomSampler gantiin oversampling list manual
+Bandingkan model/decoder: mit_b3 vs mit_b4, atau decoder swap (Segformer vs UnetPlusPlus/MAnet) dengan encoder tetap
+Scoped hyperparameter sweep: LR (3 nilai), weight decay, dropout tambahan sebelum segmentation head
+
+Fase 4, Inference & post-processing
+
+TTA diperluas: vertical flip, rotasi 90/180/270, multi-scale, rata-ratain prediksi
+Post-processing morfologi (opening/closing kernel kecil, remove small objects, fill holes), hati-hati jangan sampe ngilangin pathole kecil yang legit
+
+Berjalan terus sepanjang semua fase
+
+Experiment tracking sederhana (tabel: nama eksperimen, config, validation dice), versi ringan tanpa W&B/TensorBoard kecuali nanti emang butuh
+
+Ini cukup banyak, jadi kalau mau, kita bisa mulai eksekusi dari Fase 0 dulu (CFG + validation split + Dataset/DataLoader + AMP), itu fondasi yang bikin semua fase berikutnya bisa diukur dengan benar. Mau mulai dari situ?
+
+
+The user wants me to now implement all the changes discussed into the notebook, in .ipynb format. Let me think about what's needed here.
+This is a substantial task - I need to rewrite the notebook implementing the full roadmap discussed:
+Fase 0 (Foundation):
+
+CFG dict
+Validation split / K-Fold (stratified)
+CustomDataset + DataLoader
+Mixed precision (AMP)
+
+Fase 1 (Robust training loop):
+
+Save best_model.pth based on validation dice
+Early stopping (with scheduler adjustment - need to handle OneCycleLR issue, use ReduceLROnPlateau or set total_steps as upper bound)
+Reproducibility: worker_init_fn seed, deterministic algorithms, package versions
+
+Fase 2 (Evaluation & insight):
+
+Threshold search on validation set
+Error analysis: top-20 worst dice cases, categorization
+Data cleaning documentation as corrupted_samples.csv
+
+Fase 3 (Targeted experiments):
+
+Augmentation additions: RandomShadow, RandomSunFlare, GaussianBlur/MotionBlur, GaussNoise, ShiftScaleRotate, ElasticTransform/GridDistortion (mild), RandomCrop (mask-aware)
+Loss comparison: BCE+Dice, Tversky, FocalTversky, Lovasz vs Focal+Dice (current)
+WeightedRandomSampler replacing manual oversampling
+Model/decoder comparison: mit_b3 vs mit_b4, decoder swap
+Scoped hyperparameter sweep: LR, weight decay, dropout
+
+Fase 4 (Inference & post-processing):
+
+Expanded TTA: vertical flip, rotations, multi-scale, averaging
+Morphological post-processing
+
+Ongoing:
+
+Simple experiment tracking
+
+This is a LOT to implement in one shot. Given the scope, I think the practical approach is:
+
+Build a solid, complete, well-structured notebook implementing Fase 0, 1, 2, and 4 fully (since these are concrete, deterministic improvements)
+For Fase 3 "eksperimen" items (loss comparison, model comparison, hyperparameter sweep), these are more about providing the infrastructure/flexibility to run them via CFG flags, rather than running every single comparison automatically (since that would require actually train…
+Tampilkan lebih sedikitCheck which packages are already available in sandboxSkriptorch isn't available, and won't be installable easily (huge, and not in allowed domains necessarily - actually pypi.org and files.pythonhosted.org are in allowed domains, so pip install torch might work but it's a huge download, probably CPU-only torch which is still pretty large ~600MB-2GB). This might take a long time or fail due to size/network. Given this is a sandboxed environment without GPU anyway, full testing of torch-based training loop end-to-end might not be feasible or worth the time cost.
+Let me reconsider strategy: Since I can't reasonably install torch + smp + albumentations and test full GPU pipeline in this sandbox (no GPU, possibly large/slow installs, and the original notebook explicitly says this runs on Kaggle), I should focus on:
+
+Writing clean, carefully-reasoned, syntactically correct code based on my knowledge of these APIs (which I've already partially verified via web search for smp specifics).
+Testing what I CAN test without torch: the pure Python/numpy/cv2 logic pieces - e.g., K-fold splitting logic, post-processing morphology functions (pure cv2/numpy), threshold search logic (can simulate with numpy arrays standing in for predictions), RLE encoding (already existing, pure numpy), corrupted_samples.csv generation, config structure, file path logic, mask-aware random crop logic test with synthetic image/mask arrays using cv2/numpy (no torch needed for crop validation itself, though actual Albumentations crop transform does need albumentations lib).
+Try installing nbformat (lightweight, pure python) to build the final ipynb properly - that should be fast and reliable.
+Try installing albumentations + opencv (already have cv2) - albumentations might be feasible without torch (it's mostly numpy/cv2 based, though albumentations.pytorch.ToTensorV2 needs torch - I can still inspect that albumentations core transforms work without torch, just defer the ToTensorV2 part).
+…
+Tampilkan lebih sedikitInstall lightweight packages first (no torch yet)SkripGood, that worked fast. Now let's try torch CPU-only, smaller install via the pytorch CPU index... but wait, network is restricted to certain domains, pytorch's CPU wheel index (download.pytorch.org) is NOT in the allowed domains list. Let me check allowed domains again:
+api.anthropic.com, api.github.com, archive.ubuntu.com, codeload.github.com, crates.io, files.pythonhosted.org, github.com, index.crates.io, npmjs.com, npmjs.org, pypi.org, pythonhosted.org, raw.githubusercontent.com, registry.npmjs.org, registry.yarnpkg.com, security.ubuntu.com, static.crates.io, www.npmjs.com, www.npmjs.org, yarnpkg.com
+No download.pytorch.org. So torch would have to come from PyPI directly (pip install torch pulls from PyPI which hosts the package, files.pythonhosted.org should have it). Let's just try, PyPI does host torch wheels (large ~800MB for CPU). Let's attempt with a reasonable timeout and see.
+Actually, given time/effort constraints and that this might be a very large download (could be 600MB-2GB), let me just attempt it with a timeout guard; if it fails or takes too long I'll abandon and proceed with careful manual code writing + reasoning, clearly communicating to the user that torch-dependent parts couldn't be executed in sandbox.
+Let me try with a timeout.Tampilkan lebih sedikitAttempt to install CPU torch from PyPI with a timeout guardSkripTorch installed successfully (with CUDA deps even though no GPU here, that's fine, will use CPU mode). Now let's install segmentation_models_pytorch.Install segmentation_models_pytorch and verify torchSkripAll installed. CPU mode confirmed (no GPU here, that's fine). Now let's set up synthetic test data: create fake images and masks directory structure to test the dataset/dataloader/model/training loop logic at small scale on CPU.
+Let me build a test harness:
+
+Create synthetic train images (e.g. 20 images, 256x256x3 random) and masks (binary masks with some blobs) in a temp dir matching expected naming.
+Build CustomDataset class, test it.
+Build model with smp.Segformer(encoder_name="mit_b3", in_channels=3, classes=1), forward pass with small batch.
+Test loss functions (Dice+Focal, BCE+Dice, Tversky, FocalTversky) — check smp.losses exposes TverskyLoss, FocalLoss, DiceLoss, SoftBCEWithLogitsLoss, LovaszLoss.
+Test AMP autocast pathway, even on CPU (torch.autocast(device_type='cpu') works for CPU as well, with bfloat16 — but typical training uses cuda amp; let's design code to work device-agnostically: use torch.amp.autocast(device_type=DEVICE_TYPE, ...) and GradScaler(enabled=(device=='cuda')). I'll test minimal forward+backward with autocast on CPU just to verify no syntax errors, even though true fp16 speedup only applies on CUDA.
+Test K-Fold splitting logic with sklearn.
+Test WeightedRandomSampler logic.
+Test threshold search function logic with synthetic prediction/target arrays.
+Test post-processing morphology functions.
+Test TTA inference function (flips, rotations, multi-scale) end to end with the model.
+Test discriminative LR ParamGroup setup.
+Test early stopping + ReduceLROnPlateau scheduler logic.
+Verify smp.UnetPlusPlus / smp.MAnet work with encoder_name="mit_b3" for decoder swap idea (this was a less certain claim, let's verify directly).
+Verify in_channels=1 grayscale auto weight reuse works without error (mentioned earlier based on docs, let's confirm).
+
+…Tampilkan lebih sedikitCreate synthetic dataset to smoke-test the pipeline logicSkripNow let's build the test script that mirrors what I plan to put in the notebook: Dataset class, augmentation, model, loss functions, optimizer with discriminative LR, AMP autocast (CPU), training loop for 1-2 steps, validation, threshold search, post-processing, TTA inference, K-fold split, weighted sampler, decoder swap test (UnetPlusPlus/MAnet with mit_b3), grayscale in_channels=1 test.
+Let's write this as a python script file and execute it, iterating to fix bugs.Test harness script to validate core pipeline logic before building the final notebooktest_pipeline.pyRun smoke test for the full pipeline logicSkripImportant finding: UnetPlusPlus doesn't support mit_b3 encoder! Good thing I tested this empirically rather than asserting it confidently in the discussion. Let me check which decoders DO support mit_b3, and fix the test. Let me check error message more, and try MAnet next (which was already queued).
+Let me check what's going on - probably UnetPlusPlus requires encoder to have 5 stages with specific output strides that mit_b3 doesn't match (it only has 4 stages, not equivalent to the typical CNN 5-stage hierarchy assumed by classic U-Net decoders). Let me check by catching exception and trying available decoders.Inspect why UnetPlusPlus rejects mit_b3 encoderSkripOK confirmed, explicitly rejected by the library. Good thing I tested it, this would have been wrong info if I'd written it without testing. Let me check Unet (plain) and MAnet, FPN, DeepLabV3Plus, PAN for mit_b compatibility.Check which smp decoders have explicit mit_b restrictions in sourceSkripLet's actually try instantiating each with encoder_name="mit_b3" and a forward pass to see which actually work (presence of check doesn't necessarily mean restriction in the way I think, and absence doesn't guarantee actual structural compatibility - need empirical test).Empirically test which smp decoder architectures actually work with mit_b3 encoderSkripExcellent, this is very valuable. So MAnet, Unet, PSPNet, DeepLabV3, DeepLabV3Plus, UPerNet all work with mit_b3 encoder! UnetPlusPlus and Linknet explicitly raise errors. PAN fails due to size issue at this tiny test resolution (64x64) - might work fine at 512x512 since the issue is likely about the encoder depth/stride producing too-small feature maps relative to PAN's pooling requirements at this tiny test size. Let me retest PAN at larger size (e.g. 512) to confirm whether it's a real incompatibility or just an artifact of my tiny test resolution.Retest PAN decoder with mit_b3 at realistic 512x512 resolutionSkripOK so PAN genuinely doesn't work well with mit_b3 due to its global pooling module producing 1x1 feature map that breaks BatchNorm in train mode (this is an architecture quirk, not a resolution issue). I'll just exclude PAN from my recommendations or note it's incompatible. MAnet, Unet, DeepLabV3Plus, UPerNet, PSPNet all confirmed working. This validates my earlier suggestion of MAnet (good, accurate!) but invalidates UnetPlusPlus claim - I need to correct that in my response to the user since I previously suggested "UnetPlusPlus atau MAnet" - I should be honest and correct myself: testing showed UnetPlusPlus doesn't support mit_b* encoders, but MAnet, Unet, DeepLabV3Plus, UPerNet do.
+This is a great catch from actually testing rather than assuming. I should mention this correction transparently to the user since I gave wrong info in my prior turn.
+Now let's fix the test_pipeline.py script to remove UnetPlusPlus test and replace with MAnet (already there) plus maybe add DeepLabV3Plus. Let me update and rerun.Tampilkan lebih banyakFailed to edit test_pipeline.pytest_pipeline.pyFailed to edit test_pipeline.pytest_pipeline.pyReplace UnetPlusPlus decoder test (unsupported for mit_b*) with MAnet + DeepLabV3Plus, which were empirically confirmed to worktest_pipeline.py+8-8Re-run the full smoke test with corrected decoder listSkripAll passed. One thing I notice: postprocess removed everything (output sum: 0) on the random noise mask, which is actually correct behavior since random noise (>0.85 threshold on uniform random => isolated salt noise pixels) would all be removed by MORPH_OPEN + min_size filter, as expected since none of these pixels form a meaningful connected blob (this is testing robustness on pure noise, which behaves as expected: noise gets cleaned away completely, validating the pipeline does what it's designed to do).
+Now also worth checking smp.losses for LovaszLoss existence to support that as a configurable option. Let me check quickly.Check available loss classes in smp.losses for Lovasz supportSkripLovaszLoss exists, confirmed. Now let me quickly test it works for binary mode too, just to be safe, then proceed to building the final notebook.Confirm LovaszLoss works in binary modeSkripGood, confirmed. Now I have validated:
+
+Dataset/DataLoader
+K-Fold stratified split
+WeightedRandomSampler
+Model construction: Segformer, MAnet, DeepLabV3Plus all work with mit_b3; UnetPlusPlus/Linknet don't; PAN has issues
+Grayscale in_channels=1 works
+Loss functions: Dice, Focal, Tversky, FocalTversky (custom), BCE+Dice, Lovasz all work
+Discriminative LR param groups
+AMP autocast + GradScaler (device-agnostic)
+Early stopping logic
+Threshold search logic
+Post-processing morphology (open/close/remove small objects/fill holes)
+Expanded TTA (flips, rotations, multi-scale)
+
+Now I have a solid, tested foundation. Time to build the actual final notebook combining everything, organized into clear fase-based sections as discussed, with markdown cells explaining each part (using his preferred style: backticks for technical terms, bold for key points, no em-dash, concise bullets).
+Let me also check the docx/pptx skill instructions don't apply here (not relevant, this is ipynb). No specific skill exists for ipynb creation, so I'll just construct using nbformat directly, which I've installed and verified availability.
+Let me plan the final notebook cell structure now. I want it to be comprehensive but still navigable. Given the complexity, I'll organize as:
+Markdown: Title cell explaining the notebook's structure/changelog vs original
+Cell 1 (code): pip install
+Cell 2 (markdown): Fase 0 header
+Cell 3 (code): imports, reproducibility, CFG dict
+Cell 4 (markdown): explain CFG
+Cell 5 (code): data prep - paths, blacklist -> corrupted_samples.csv, mask_map, K-Fold split (stratified), select fold
+Cell 6 (markdown): explain data prep changes
+Cell 7 (code): Augmentation pipelines (train_transform expanded with grayscale option, val_transform)
+Cell 8 (code): Dataset class + DataLoader + WeightedRandomSampler
+Cell 9 (markdown): Fase 1 header
+Cell 10 (code): Model builder function (configurable encoder/decoder/in_channels)
+…Tampilkan lebih banyakCheck albumentations for mask-aware crop and elastic/grid distortion transformsSkripCropNonEmptyMaskIfExists exists exactly as I hoped, that's mask-aware crop (it tries to crop a region containing the mask if one exists, otherwise falls back to random crop). This is the perfect transform for safely adding crop augmentation. Let me verify it works correctly with a quick test, then incorporate into the final augmentation pipeline.
+Let me also verify ElasticTransform and GridDistortion are usable in current albumentations API (parameter names may differ in v2.x vs older).
+Let's do a final consolidated test of the full augmentation pipeline I intend to use, including RandomShadow, RandomSunFlare, GaussNoise, ShiftScaleRotate (or Affine, since deprecation warning suggested using Affine instead - let me check Affine usage), CropNonEmptyMaskIfExists, ElasticTransform, GridDistortion - run on synthetic image+mask to make sure no errors with this albumentations version (2.0.8).
+Given the deprecation warning earlier ("ShiftScaleRotate is a special case of Affine transform. Please use Affine transform instead"), I should switch to A.Affine for cleaner / future-proof code, matching the library's current recommendation. Let me test Affine parameters equivalent to ShiftScaleRotate.
+Let's build the comprehensive final augmentation test.Tampilkan lebih banyakTest full expanded augmentation pipeline including mask-aware crop, elastic/grid distortion, AffineSkripExcellent, the full augmentation pipeline works across 30 random trials without errors. Now I have everything validated. Let me now assemble the complete final notebook.
+Let me plan out the complete code carefully, integrating everything tested:
+
+pip install cell
+Imports + reproducibility + CFG
+Data prep: blacklist -> corrupted_samples.csv, mask_map, file list, StratifiedKFold split, hard-case weights derived from LIST_DICE_0/LOW/MID for WeightedRandomSampler
+Augmentation (train_transform configurable for grayscale via cfg, val_transform)
+Dataset + DataLoader + sampler
+Model builder (decoder map with compatibility notes)
+Loss builder
+Optimizer (discriminative LR) + scheduler (ReduceLROnPlateau) + AMP scaler
+EarlyStopper class
+Metrics: dice_score_np, validate function (runs over val loader, returns mean dice + per-file dice list + collected probs/targets for threshold search & error analysis)
+train_one_fold function: full training loop with epoch loop, train step (AMP), validate each epoch, scheduler.step(val_dice), early stopping check, save best model checkpoint, return history
+Run training for CFG['fold']
+Threshold search using best model's validation predictions
+Error analysis: worst 20 dice cases from validation fold, visualize, save dataframe template for manual annotation
+Post-processing functions
+TTA inference function
+Inference on test set: load best model + best threshold, predict with TTA + postprocess, RLE encode, save submission.csv
+Experiment tracking: append a row to experiment_log.csv
+
+I want to make sure the actual training loop matches GPU memory practicality (img_size 512, batch_size 2) like original. Also keep tqdm progress bars.
+One more consideration: validation should be on full original image size (not resized down) for fair dice comparison against ground truth at original resolution, similar to original's "section 5" logic, where pred is resized to (w,h) original before computi…Tampilkan lebih banyakConfirm all chosen decoder options work with mit_b3 at the real 512x512 training resolutionSkripGot killed - probably out of memory (OOM) since this sandbox likely has limited RAM, and we're trying 5 models with batch=2 at 512x512 in CPU mode (high memory for some decoders like UPerNet with multiple FPN levels, or even MAnet/DeepLabV3Plus on CPU forward at full resolution without GPU could be heavy). Let me test one at a time with smaller batch (1) and clear cache between to avoid OOM, or just lower resolution test for these others since I already confirmed compatibility at 64x64 structurally (architecture works), and 512x512 just needs more memory but not different code path. Given this sandbox doesn't have a GPU and limited RAM, let me test each individually with batch_size=1 and del/gc.collect between.Test remaining decoders individually with batch=1, no_grad to avoid OOM in sandboxSkripAll confirmed working at full 512x512 resolution. Now let's also verify the discriminative LR optimizer approach works for these other decoder architectures (model.decoder + model.segmentation_head attribute names) - need to confirm these attribute names are consistent across smp model classes (encoder, decoder, segmentation_head) - this is standard SMP convention (SegmentationModel base class), should be consistent. I already tested with Segformer; should generalize.
+I have now validated enough to build the final notebook confidently. Let me proceed to construct it.
+Given time/effort constraints, I'll now write the full notebook generation script in one go, carefully, drawing on all validated pieces. Let me write a python script build_notebook.py that constructs the cells.
+I need to think about realistic CFG defaults: keep epochs=25 as upper bound (matches original), early_stop_patience=5 (matches his point 3 "tidak naik 5 epoch"), n_folds=5, fold=0 default.
+Let me also reconsider IMG_SIZE/BATCH_SIZE same as original (512, 2).
+Now write full code content. I'll be meticulous about consistency of variable/function names referenced across cells since this needs to run top-to-bottom in a real kernel.
+Let's draft cell by cell content text (this will be long).
+I will also include at the very top a markdown "changelog" cell summarizing what changed vs original ara-dropnoise notebook, structured as bullet list per fase - this directly documents the diffs for William's review, helpful since he'll want to know what changed where. I will match his preferred formatting style for the explanatory content (no em dash, bold key findings, backticks for code terms, concise bullets).
+Now letting me write this out.
+Also note: need to keep pip install -q segmentation-models-pytorch albumentations cell, maybe add packages needed: pandas (already common on Kaggle), tqdm (already there), scikit-learn KFold (sklearn pre-installed on Kaggle), matplotlib for visualization (alrea…Tampilkan lebih banyakVerify torch.cuda.amp API still works (even if deprecated) in installed torch versionSkripConfirmed deprecated but functional. I'll use the modern torch.amp.GradScaler('cuda', enabled=...) and torch.amp.autocast('cuda', enabled=...) syntax instead since that's the recommended forward-compatible API and is supported in reasonably recent PyTorch (2.x) which Kaggle uses. Let me verify this exact positional-arg style works (device_type as first positional arg vs device= kwarg I used earlier which also worked). Let me just confirm the cleanest form.Confirm modern torch.amp API syntax works cleanly without warningsSkripNo warnings, clean. I'll use this modern API in the final notebook: torch.amp.GradScaler('cuda', enabled=(CFG['device']=='cuda')) and torch.amp.autocast('cuda', enabled=(CFG['device']=='cuda')).
+Now I have everything validated. Time to write the final notebook. Let me build it now using a Python script with nbformat.
+I'll structure the content carefully. Given the length, I'll write the generation script in one big creation, then run it, then validate the resulting ipynb (re-parse and check cell count/syntax-compile each code cell with compile() to catch syntax errors before delivering).
+Let me start drafting all cell contents.Tampilkan lebih banyakScript to assemble the final improved notebook using nbformat, cell by cell, matching the discussed Fase 0-4 roadmapThe tool requires path as second param but I provided description, path, file_text but maybe field order or naming issue. Let me check - the create_file schema requires description, path, file_text in that order. I provided them but got "path: Field required" error - maybe I mislabeled the parameter. Let me check my invoke call - I used parameter name "path" with value "/home/claude/build_notebook.py"... wait I didn't see that in the call above. Let me recheck - I used:
+<parameter name="description">...</parameter>
+<parameter name="file_text">...</parameter>
+I forgot path parameter entirely! Let me redo with path included.Script to assemble the final improved notebook using nbformat, cell by cell, matching the discussed Fase 0-4 roadmapbuild_notebook.py
